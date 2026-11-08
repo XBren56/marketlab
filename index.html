@@ -56,10 +56,105 @@ function renderArchives(){const root=$('archiveFolders');if(!root)return;root.re
 function openArchive(key){const a=archives.find(x=>x.id===key);if(!a)return;activeArchive=a;$('archiveDetail').style.display='block';$('archiveDetailTitle').textContent=a.title+' · '+a.folder;const z=a.data,rows=[['Saved',new Date(a.at).toLocaleString()],['Cash',usd(z.cash)],['Trades',z.trades?.length||0],['Plans',z.plans?.length||0],['Bank transactions',z.bank?.length||0],['Audits',z.audits?.length||0],['Snapshots',z.history?.length||0]];let html='<div class="grid">'+rows.map(([k,v])=>'<div class="card"><small>'+esc(k)+'</small><h3>'+esc(v)+'</h3></div>').join('')+'</div>';for(const [label,key] of [['Trades','trades'],['Bank transactions','bank'],['Trade plans','plans'],['Audits','audits']]){html+='<details class="card"><summary>'+label+' ('+(z[key]?.length||0)+')</summary>';for(const item of z[key]||[])html+='<div class="card">'+Object.entries(item).filter(([k])=>k!=='id').map(([k,v])=>'<p><b>'+esc(k)+':</b> '+esc(v)+'</p>').join('')+'</div>';html+='</details>'}html+='<details class="card"><summary>Saved prices, budgets and account balances</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">'+esc(JSON.stringify({prices:z.prices,budgets:z.budgets,accounts:z.accounts},null,2))+'</pre></details>';$('archiveDetailBody').innerHTML=html;$('archiveDetail').scrollIntoView({behavior:'smooth',block:'start'})}
 function closeArchive(){activeArchive=null;$('archiveDetail').style.display='none'}
 function downloadArchiveJSON(){download('marketlab-archives-'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify({version:1,archives},null,2),'application/json')}
-function pdfText(text){return String(text).normalize('NFKD').replace(/[^\x20-\x7E\n]/g,'?')}
-function pdfEscape(t){return pdfText(t).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')}
-function downloadPDF(kind){let title='MarketLab '+kind,lines=[];if(kind==='report'){const p=portfolio();lines=['Generated: '+new Date().toLocaleString(),'Starting balance: '+usd(START),'Virtual cash: '+usd(d.cash),'Portfolio equity: '+usd(p.equity),'Realized profit/loss: '+usd(p.realized),'Unrealized profit/loss: '+usd(p.unrealized),'Total trades: '+d.trades.length,'','TRADES',...d.trades.map(t=>[t.date,t.symbol,t.side,t.qty,usd(t.price)].join(' | '))]}else if(kind==='statement'){if(!$('statementOutput').textContent.trim())statement();lines=$('statementOutput').innerText.split('\n')}else if(kind==='worksheet'){lines=$('worksheet').innerText.split('\n');lines.push(...Array(12).fill('________________________________________________________'))}else if(kind==='archive'){if(!activeArchive)return alert('Open an archive first');title+=' - '+activeArchive.title;const a=activeArchive;lines=['Folder: '+a.folder,'Saved: '+new Date(a.at).toLocaleString(),'Cash: '+usd(a.data.cash),''];for(const k of ['trades','plans','bank','audits']){lines.push(k.toUpperCase());for(const item of a.data[k]||[])lines.push(...Object.entries(item).filter(([key])=>key!=='id').map(([key,value])=>key+': '+value),'---')}}const wrapped=[];for(const l of lines){let t=pdfText(l);if(!t){wrapped.push('');continue}while(t.length>90){wrapped.push(t.slice(0,90));t=t.slice(90)}wrapped.push(t)}const pages=[];for(let i=0;i<wrapped.length||!pages.length;i+=48)pages.push(wrapped.slice(i,i+48));const objects=[null,null,null],pageRefs=[];function obj(s){objects.push(s);return objects.length-1}const font=obj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');for(const page of pages){let stream='BT /F1 10 Tf 45 755 Td 13 TL ';for(const line of [title,'',...page])stream+='('+pdfEscape(line)+') Tj T* ';stream+='ET';const content=obj('<< /Length '+stream.length+' >>\nstream\n'+stream+'\nendstream');const pageId=obj('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 '+font+' 0 R >> >> /Contents '+content+' 0 R >>');pageRefs.push(pageId)}objects[1]='<< /Type /Catalog /Pages 2 0 R >>';objects[2]='<< /Type /Pages /Kids ['+pageRefs.map(n=>n+' 0 R').join(' ')+'] /Count '+pageRefs.length+' >>';let output='%PDF-1.4\n',offsets=[0];for(let i=1;i<objects.length;i++){offsets[i]=output.length;output+=i+' 0 obj\n'+objects[i]+'\nendobj\n'}const xref=output.length;output+='xref\n0 '+objects.length+'\n0000000000 65535 f \n';for(let i=1;i<objects.length;i++)output+=String(offsets[i]).padStart(10,'0')+' 00000 n \n';output+='trailer\n<< /Size '+objects.length+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF';download('marketlab-'+kind+'-'+new Date().toISOString().slice(0,10)+'.pdf',output,'application/pdf')}
 
+function pdfText(value){return String(value??'').normalize('NFKD').replace(/[^\x20-\x7E]/g,'?')}
+function pdfEscape(value){return pdfText(value).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')}
+function downloadPDF(kind){
+ const now=new Date(),date=now.toISOString().slice(0,10);
+ const labels={report:'Trading Performance Report',statement:'Account Statement',worksheet:'Printable Worksheet',archive:'Historical Archive'};
+ let title=labels[kind]||'MarketLab Report',subtitle='Generated '+now.toLocaleString(),blocks=[];
+ const heading=t=>blocks.push({type:'heading',text:t});
+ const para=t=>blocks.push({type:'paragraph',text:String(t??'')});
+ const metrics=items=>blocks.push({type:'metrics',items});
+ const table=(headers,rows,widths)=>blocks.push({type:'table',headers,rows,widths});
+ const empty=t=>para(t||'No records available.');
+ const summary='Educational paper trading and manually recorded finances. Not an official brokerage or bank statement.';
+ if(kind==='report'){
+  const p=portfolio(),net=p.equity-START;
+  metrics([['PORTFOLIO EQUITY',usd(p.equity)],['TOTAL P/L',usd(net)],['VIRTUAL CASH',usd(d.cash)],['OPEN POSITIONS',Object.values(p.positions).filter(x=>x.qty>0).length]]);
+  heading('Performance breakdown');
+  table(['Metric','Value'],[['Starting virtual balance',usd(START)],['Realized profit / loss',usd(p.realized)],['Unrealized profit / loss',usd(p.unrealized)],['Simulated trades',String(d.trades.length)],['Audit entries',String(d.audits.length)]],[310,210]);
+  heading('Open positions');
+  const rows=Object.entries(p.positions).filter(([_,x])=>x.qty>0).map(([symbol,x])=>[symbol,String(+x.qty.toFixed(4)),usd(x.cost/x.qty),usd(d.prices[symbol]),usd(x.qty*Number(d.prices[symbol]||0))]);
+  table(['Symbol','Shares','Avg cost','Mark','Value'],rows.length?rows:[['No open positions','','','','']],[88,94,110,108,120]);
+  heading('Trade history');
+  table(['Date','Ticker','Side','Shares','Price','Fee'],d.trades.map(t=>[t.date,t.symbol,t.side,t.qty,usd(t.price),usd(t.fee)]).length?d.trades.map(t=>[t.date,t.symbol,t.side,t.qty,usd(t.price),usd(t.fee)]):[['No trades','','','','','']],[102,76,65,80,103,94]);
+ }else if(kind==='statement'){
+  const account=$('statementAccount').value,from=$('statementFrom').value,to=$('statementTo').value;
+  if(!account)return alert('Choose an account first');
+  if(from&&to&&from>to)return alert('Invalid date range');
+  title='Account Statement - '+account;subtitle=(from||'Beginning')+' to '+(to||'Latest')+' | Generated '+now.toLocaleString();
+  const tx=d.bank.filter(t=>t.account===account).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  let balance=Number(d.accounts[account]||0);
+  for(const t of tx)if(from&&t.date<from)balance+=(t.type==='Deposit'?1:-1)*Number(t.amount);
+  const opening=balance,rows=[];
+  for(const t of tx.filter(t=>(!from||t.date>=from)&&(!to||t.date<=to))){balance+=(t.type==='Deposit'?1:-1)*Number(t.amount);rows.push([t.date,t.memo||t.category||'-',t.type,usd(t.amount),usd(balance)])}
+  metrics([['OPENING BALANCE',usd(opening)],['CLOSING BALANCE',usd(balance)],['TRANSACTIONS',String(rows.length)]]);
+  heading('Transaction register');
+  table(['Date','Description','Type','Amount','Balance'],rows.length?rows:[['No transactions','','','','']],[85,160,90,85,100]);
+  para('This statement reflects manually entered data, not a verified bank account.');
+ }else if(kind==='worksheet'){
+  const name=$('worksheet').querySelector('h2')?.textContent||'Worksheet';title=name;subtitle='Printable blank worksheet | '+date;
+  const cols=layouts[name]||['Date','Description','Amount','Notes'];
+  heading('Name: _________________________     Period: _________________________');
+  table(cols,Array.from({length:13},()=>cols.map(()=>'')),cols.map(()=>520/cols.length));
+  heading('Review and next steps');
+  for(let i=0;i<4;i++)para('_________________________________________________________________________________');
+ }else if(kind==='archive'){
+  if(!activeArchive)return alert('Open an archive first');
+  const a=activeArchive,z=a.data;title='Archive - '+a.title;subtitle='Folder: '+a.folder+' | Saved '+new Date(a.at).toLocaleString();
+  metrics([['VIRTUAL CASH',usd(z.cash)],['TRADES',String(z.trades?.length||0)],['BANK ENTRIES',String(z.bank?.length||0)],['AUDITS',String(z.audits?.length||0)]]);
+  for(const [label,key] of [['Trades','trades'],['Bank ledger','bank'],['Trade plans','plans'],['Performance audits','audits']]){
+   heading(label);
+   const records=z[key]||[];
+   if(!records.length){empty('No records in this snapshot.');continue}
+   for(const record of records){const line=Object.entries(record).filter(([k])=>k!=='id').map(([k,v])=>k+': '+v).join('  |  ');para(line)}
+  }
+  heading('Snapshot balances and settings');
+  for(const [label,key] of [['Prices','prices'],['Budgets','budgets'],['Accounts','accounts']]){para(label+':');for(const [k,v] of Object.entries(z[key]||{}))para(k+' - '+v)}
+ }else return;
+ const pages=[[]],W=612,H=792,L=46,R=46,usable=W-L-R;let y=680;
+ const addPage=()=>{pages.push([]);y=680};
+ const emit=x=>pages[pages.length-1].push(x);
+ const ensure=h=>{if(y-h<65)addPage()};
+ const text=(value,x,yy,size=10,bold=false,color=[0.15,0.22,0.34])=>emit({type:'text',value:pdfText(value),x,y:yy,size,bold,color});
+ const rect=(x,yy,w,h,color)=>emit({type:'rect',x,y:yy,w,h,color});
+ const rule=(yy)=>rect(L,yy,usable,0.7,[0.84,0.88,0.93]);
+ function wrap(value,maxChars){const out=[];for(const original of String(value??'').split('\n')){let line='';for(const word of pdfText(original).split(/\s+/)){if((line+' '+word).trim().length>maxChars&&line){out.push(line);line=''}if(word.length>maxChars){if(line){out.push(line);line=''}for(let i=0;i<word.length;i+=maxChars)out.push(word.slice(i,i+maxChars))}else line+=(line?' ':'')+word}out.push(line)}return out}
+ for(const b of blocks){
+  if(b.type==='heading'){ensure(38);y-=15;text(b.text,L,y,13,true,[0.09,0.22,0.42]);y-=9;rule(y);y-=15}
+  if(b.type==='paragraph'){for(const line of wrap(b.text,98)){ensure(16);text(line,L,y,9);y-=15}y-=5}
+  if(b.type==='metrics'){const cols=Math.min(4,b.items.length),cw=usable/cols;ensure(76);for(let i=0;i<b.items.length;i++){const x=L+(i%cols)*cw,yy=y-Math.floor(i/cols)*66;rect(x+2,yy-47,cw-7,59,[0.93,0.96,0.99]);text(b.items[i][0],x+10,yy-7,8,true,[0.32,0.43,0.56]);text(b.items[i][1],x+10,yy-30,15,true,[0.07,0.24,0.45])}y-=Math.ceil(b.items.length/cols)*66+13}
+  if(b.type==='table'){
+   const widths=b.widths||b.headers.map(()=>usable/b.headers.length);
+   const header=()=>{ensure(32);rect(L,y-20,usable,28,[0.11,0.25,0.44]);let x=L;for(let i=0;i<b.headers.length;i++){text(b.headers[i],x+5,y-10,8,true,[1,1,1]);x+=widths[i]}y-=30};
+   header();
+   for(let n=0;n<b.rows.length;n++){const cells=b.rows[n].map((v,i)=>wrap(v,Math.max(8,Math.floor((widths[i]-12)/5.3))));const h=Math.max(27,Math.max(...cells.map(c=>c.length))*12+10);if(y-h<65){addPage();header()}if(n%2===0)rect(L,y-h+3,usable,h,[0.95,0.97,0.99]);let x=L;for(let i=0;i<b.headers.length;i++){for(let j=0;j<Math.min(cells[i]?.length||0,10);j++)text(cells[i][j],x+5,y-12-j*12,8);x+=widths[i]}y-=h}
+   y-=18;
+  }
+ }
+ const objects=[null,null,null],pageRefs=[];const obj=v=>(objects.push(v),objects.length-1);
+ const regular=obj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),bold=obj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+ const rgb=c=>c.map(v=>Number(v).toFixed(3)).join(' ');
+ for(let i=0;i<pages.length;i++){
+  let commands=[];
+  commands.push('0.07 0.18 0.33 rg 0 728 612 64 re f');
+  commands.push('BT /F2 20 Tf 1 1 1 rg 46 757 Td (MARKETLAB) Tj ET');
+  commands.push('BT /F1 10 Tf 0.83 0.9 1 rg 46 739 Td (SIMULATE  /  RECORD  /  REVIEW) Tj ET');
+  const drawText=(v,x,yy,size,boldFont,color)=>commands.push('BT /'+(boldFont?'F2':'F1')+' '+size+' Tf '+rgb(color)+' rg '+x+' '+yy+' Td ('+pdfEscape(v)+') Tj ET');
+  drawText(title,L,708,17,true,[0.08,0.2,0.37]);
+  for(const [j,line] of wrap(subtitle,94).slice(0,2).entries())drawText(line,L,693-j*11,9,false,[0.38,0.45,0.54]);
+  for(const c of pages[i]){if(c.type==='rect')commands.push(rgb(c.color)+' rg '+c.x+' '+c.y+' '+c.w+' '+c.h+' re f');else drawText(c.value,c.x,c.y,c.size,c.bold,c.color)}
+  commands.push('0.83 0.87 0.91 rg 46 49 520 0.7 re f');
+  drawText(summary.slice(0,100),46,35,7,false,[0.42,0.47,0.54]);
+  drawText('Page '+(i+1)+' / '+pages.length,500,20,8,false,[0.4,0.46,0.53]);
+  const stream=commands.join('\n')+'\n',content=obj('<< /Length '+stream.length+' >>\nstream\n'+stream+'endstream');
+  pageRefs.push(obj('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 '+regular+' 0 R /F2 '+bold+' 0 R >> >> /Contents '+content+' 0 R >>'))
+ }
+ objects[1]='<< /Type /Catalog /Pages 2 0 R >>';objects[2]='<< /Type /Pages /Kids ['+pageRefs.map(n=>n+' 0 R').join(' ')+'] /Count '+pageRefs.length+' >>';
+ let output='%PDF-1.4\n',offsets=[0];for(let i=1;i<objects.length;i++){offsets[i]=output.length;output+=i+' 0 obj\n'+objects[i]+'\nendobj\n'}const xref=output.length;output+='xref\n0 '+objects.length+'\n0000000000 65535 f \n';for(let i=1;i<objects.length;i++)output+=String(offsets[i]).padStart(10,'0')+' 00000 n \n';output+='trailer\n<< /Size '+objects.length+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF';
+ download('MarketLab-'+kind+'-'+date+'.pdf',output,'application/pdf');
+}
 function backup(){download('marketlab-backup-'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify({version:2,exported:new Date().toISOString(),data:d,archives},null,2),'application/json')}
 async function restore(el){if(!el.files[0])return;try{const obj=JSON.parse(await el.files[0].text());if(obj.version!==2||!obj.data||!['trades','bank','plans','audits'].every(k=>Array.isArray(obj.data[k])))throw Error('This is not a valid MarketLab v2 backup');if(confirm('Replace all current records with this backup?')){d=obj.data;if(Array.isArray(obj.archives)){archives=obj.archives;archiveSave()}save()}}catch(e){alert(e.message)}el.value=''}
 worksheet('Trade research and plan');renderArchives();go('dashboard');dates();const qs=new URLSearchParams(location.search);if(qs.get('tradeSymbol')){go('simulator');const f=$('tradeForm');f.elements.symbol.value=qs.get('tradeSymbol').toUpperCase().replace(/[^A-Z0-9.\\-]/g,'').slice(0,18);const p=Number(qs.get('tradePrice'));if(p>0)f.elements.price.value=p.toFixed(2);if(['Buy','Sell'].includes(qs.get('tradeSide')))f.elements.side.value=qs.get('tradeSide');$('syncStatus').textContent='Trade form prefilled from chart. Review price and quantity before executing.'}
