@@ -1,0 +1,11 @@
+{
+  "name": "MarketLab — Trading & Money Lab",
+  "short_name": "MarketLab",
+  "description": "Offline-first paper trading, financial planning and personal recordkeeping",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#09111e",
+  "theme_color": "#142238",
+  "icons": []
+}
