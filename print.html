@@ -13,4 +13,4 @@ else if(kind==='archive'){let archives=[];try{archives=JSON.parse(localStorage.g
 else{title('Unknown document');error('Choose a document from MarketLab.')}
 async function shareDocument(){const url=new URL(location.href);url.searchParams.delete('autoprint');url.searchParams.delete('v');const label=$('title').textContent||'MarketLab Document';if(navigator.share){try{await navigator.share({title:label,url:url.href});return}catch(e){if(e.name==='AbortError')return}}const panel=$('shareFallback');panel.hidden=false;panel.scrollIntoView({block:'nearest',behavior:'smooth'})}
 
-</script></body></html>
+</script><script>if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));</script></body></html>
